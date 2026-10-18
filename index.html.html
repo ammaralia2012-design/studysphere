@@ -1,0 +1,1502 @@
+<!DOCTYPE html>
+<html lang="en" class="h-full bg-[#F8FAFC]">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
+  <title>StudySphere — AI Multi-Lecture & Backlog Planner</title>
+
+  <!-- PWA & Mobile App Meta Tags -->
+  <meta name="theme-color" content="#4F46E5" />
+  <meta name="mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+  <meta name="apple-mobile-web-app-title" content="StudySphere" />
+
+  <link rel="manifest" href='data:application/manifest+json;utf-8,%7B%22name%22%3A%22StudySphere%22%2C%22short_name%22%3A%22StudySphere%22%2C%22start_url%22%3A%22.%22%2C%22display%22%3A%22standalone%22%2C%22background_color%22%3A%22%23F8FAFC%22%2C%22theme_color%22%3A%22%234F46E5%22%7D' />
+
+  <!-- Fonts -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
+
+  <!-- Tailwind CSS -->
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script>
+    tailwind.config = {
+      theme: {
+        extend: {
+          fontFamily: { sans: ['Inter', 'sans-serif'] },
+          colors: {
+            brand: {
+              indigo: '#4F46E5',
+              violet: '#8B5CF6',
+              teal: '#0D9488',
+              surface: '#F8FAFC',
+              dark: '#1E293B',
+              border: '#E2E8F0',
+            }
+          }
+        }
+      }
+    }
+  </script>
+
+  <!-- React 18, Babel & Tesseract OCR CDN -->
+  <script src="https://unpkg.com/react@18/umd/react.production.min.js" crossorigin></script>
+  <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js" crossorigin></script>
+  <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js"></script>
+
+  <style>
+    body {
+      font-family: 'Inter', sans-serif;
+      background-color: #F8FAFC;
+      color: #1E293B;
+      padding-top: env(safe-area-inset-top);
+      padding-bottom: env(safe-area-inset-bottom);
+      -webkit-tap-highlight-color: transparent;
+    }
+    ::-webkit-scrollbar { width: 5px; height: 5px; }
+    ::-webkit-scrollbar-track { background: #F1F5F9; }
+    ::-webkit-scrollbar-thumb { background: #CBD5E1; border-radius: 9999px; }
+    .modal-backdrop {
+      background: rgba(15, 23, 42, 0.45);
+      backdrop-filter: blur(4px);
+    }
+    .mobile-bottom-nav {
+      padding-bottom: max(0.5rem, env(safe-area-inset-bottom));
+    }
+  </style>
+</head>
+<body class="h-full antialiased text-[#1E293B]">
+  <div id="root" class="h-full flex flex-col"></div>
+
+  <script type="text/babel">
+    const { useState, useEffect, useMemo, useRef } = React;
+
+    const STORAGE_KEY = 'STUDYSPHERE_STORE_V8';
+
+    const INITIAL_SEED = {
+      profile: {
+        name: 'Student User',
+        email: 'student@university.edu',
+        academicLevel: 'Undergraduate',
+        targetDailyHours: 7.0,
+        apiKey: ''
+      },
+      tasks: [
+        { id: 't1', title: 'Calculus Assignment 3', subject: 'Mathematics', dueDate: 'Tomorrow', priority: 'High', completed: false }
+      ],
+      exams: [
+        { id: 'e1', title: 'Midterm Exam', subject: 'Physics', date: new Date(Date.now() + 86400000 * 10).toISOString().split('T')[0], progress: 45, chapters: ['Optics', 'Thermodynamics'] }
+      ],
+      notes: [
+        { id: 'n1', title: 'Ohm’s Law & Formulas', subject: 'Physics', content: 'V = I * R\nP = V * I = I^2 * R\nWork on series and parallel circuits.', updatedAt: 'Today' }
+      ],
+      backlogs: [
+        { id: 'b1', title: 'Rotational Motion Part 2', subject: 'Physics', durationHours: 2.0, priority: 'High', status: 'Pending', notes: 'Missed Thursday class' }
+      ],
+      // Starts with 2 sample days ready with lectures!
+      studyPlan: [
+        {
+          id: 'sample-1',
+          date: new Date().toISOString().split('T')[0],
+          dayName: 'Today',
+          subject: 'Physics',
+          chapter: 'Kinematics & Motion',
+          durationHours: 2.0,
+          difficulty: 'Medium',
+          completed: false,
+          lectures: [
+            { id: 'lec-1', name: 'Physics Morning Class', time: '09:00 AM – 10:30 AM', duration: 1.5 }
+          ]
+        },
+        {
+          id: 'sample-2',
+          date: new Date(Date.now() + 86400000).toISOString().split('T')[0],
+          dayName: 'Tomorrow',
+          subject: 'Mathematics',
+          chapter: 'Calculus & Limits',
+          durationHours: 2.0,
+          difficulty: 'Medium',
+          completed: false,
+          lectures: [
+            { id: 'lec-2', name: 'Math Problem Session', time: '11:00 AM – 12:30 PM', duration: 1.5 }
+          ]
+        }
+      ]
+    };
+
+    const StorageAdapter = {
+      load() {
+        try {
+          const raw = localStorage.getItem(STORAGE_KEY);
+          return raw ? JSON.parse(raw) : INITIAL_SEED;
+        } catch (e) {
+          return INITIAL_SEED;
+        }
+      },
+      save(data) {
+        try {
+          localStorage.setItem(STORAGE_KEY, JSON.stringify(data));
+        } catch (e) {}
+      },
+      reset() {
+        localStorage.setItem(STORAGE_KEY, JSON.stringify(INITIAL_SEED));
+        return INITIAL_SEED;
+      }
+    };
+
+    const Badge = ({ children, variant = 'neutral' }) => {
+      const variants = {
+        neutral: 'bg-slate-100 text-slate-700 border-slate-200',
+        primary: 'bg-indigo-50 text-indigo-700 border-indigo-200',
+        teal: 'bg-teal-50 text-teal-700 border-teal-200',
+        violet: 'bg-violet-50 text-violet-700 border-violet-200',
+        warning: 'bg-amber-50 text-amber-700 border-amber-200',
+        danger: 'bg-rose-50 text-rose-700 border-rose-200',
+      };
+      return (
+        <span className={`inline-flex items-center px-2 py-0.5 rounded text-[11px] font-semibold border ${variants[variant] || variants.neutral}`}>
+          {children}
+        </span>
+      );
+    };
+
+    const Card = ({ children, className = '' }) => (
+      <div className={`bg-white rounded-xl border border-slate-200/90 shadow-[0_1px_3px_rgba(0,0,0,0.03)] ${className}`}>
+        {children}
+      </div>
+    );
+
+    const Modal = ({ isOpen, onClose, title, children }) => {
+      if (!isOpen) return null;
+      return (
+        <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center p-0 sm:p-4 modal-backdrop">
+          <div className="bg-white rounded-t-2xl sm:rounded-xl border border-slate-200 shadow-2xl max-w-lg w-full p-5 sm:p-6 space-y-4 max-h-[85vh] overflow-y-auto">
+            <div className="flex items-center justify-between pb-3 border-b border-slate-100 sticky top-0 bg-white z-10">
+              <h3 className="font-bold text-slate-900 text-base">{title}</h3>
+              <button onClick={onClose} className="text-slate-400 hover:text-slate-600 font-bold p-1 text-lg">✕</button>
+            </div>
+            {children}
+          </div>
+        </div>
+      );
+    };
+
+    function App() {
+      const [data, setData] = useState(() => StorageAdapter.load());
+      const [view, setView] = useState('planner');
+      const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
+      const [notification, setNotification] = useState(null);
+
+      const notify = (msg) => {
+        setNotification(msg);
+        setTimeout(() => setNotification(null), 3200);
+      };
+
+      const updateData = (updater) => {
+        setData(prev => {
+          const next = typeof updater === 'function' ? updater(prev) : { ...prev, ...updater };
+          StorageAdapter.save(next);
+          return next;
+        });
+      };
+
+      const navTo = (newView) => {
+        setView(newView);
+        setMobileMenuOpen(false);
+        window.scrollTo({ top: 0, behavior: 'smooth' });
+      };
+
+      return (
+        <div className="min-h-screen flex flex-col bg-[#F8FAFC]">
+          {notification && (
+            <div className="fixed top-4 right-4 left-4 sm:left-auto sm:w-80 z-50 bg-slate-900 text-white text-xs font-semibold px-4 py-3 rounded-xl shadow-xl border border-slate-800 transition-all text-center sm:text-left">
+              {notification}
+            </div>
+          )}
+
+          <div className="flex flex-1 min-h-screen overflow-hidden pb-16 md:pb-0">
+            <Sidebar 
+              currentView={view} 
+              onSelectView={navTo} 
+              mobileOpen={mobileMenuOpen} 
+              onCloseMobile={() => setMobileMenuOpen(false)}
+              profile={data.profile}
+            />
+
+            <div className="flex-1 flex flex-col min-w-0 overflow-y-auto">
+              <Header 
+                currentView={view} 
+                onToggleMobile={() => setMobileMenuOpen(prev => !prev)}
+              />
+              <main className="flex-1 p-3 sm:p-6 lg:p-8 max-w-7xl w-full mx-auto">
+                {view === 'dashboard' && <DashboardView data={data} updateData={updateData} navTo={navTo} notify={notify} />}
+                {view === 'planner' && <PlannerView data={data} updateData={updateData} notify={notify} />}
+                {view === 'assistant' && <AssistantView profile={data.profile} notify={notify} />}
+                {view === 'tasks' && <TasksView tasks={data.tasks} updateData={updateData} notify={notify} />}
+                {view === 'notes' && <NotesView notes={data.notes} updateData={updateData} navTo={navTo} notify={notify} />}
+                {view === 'exams' && <ExamsView exams={data.exams} updateData={updateData} notify={notify} />}
+                {view === 'progress' && <ProgressView data={data} />}
+                {view === 'settings' && <SettingsView data={data} updateData={updateData} notify={notify} onReset={() => {
+                  const fresh = StorageAdapter.reset();
+                  setData(fresh);
+                  notify('Reset database to clean state');
+                }} />}
+              </main>
+            </div>
+
+            {/* Native Mobile Bottom Navigation Bar */}
+            <nav className="md:hidden fixed bottom-0 left-0 right-0 bg-white/95 backdrop-blur-md border-t border-slate-200 z-40 flex items-center justify-around mobile-bottom-nav pt-2">
+              {[
+                { id: 'dashboard', label: 'Home', icon: '📊' },
+                { id: 'planner', label: 'Planner & Lectures', icon: '📅' },
+                { id: 'assistant', label: 'Tutor', icon: '💬' },
+                { id: 'tasks', label: 'Tasks', icon: '✅' },
+                { id: 'more', label: 'More', icon: '⚙️' },
+              ].map(tab => {
+                const isActive = tab.id === 'more' 
+                  ? ['notes', 'exams', 'progress', 'settings'].includes(view) 
+                  : view === tab.id;
+                return (
+                  <button
+                    key={tab.id}
+                    onClick={() => tab.id === 'more' ? setMobileMenuOpen(true) : navTo(tab.id)}
+                    className={`flex flex-col items-center justify-center py-1 px-3 text-[10px] font-semibold transition ${
+                      isActive ? 'text-indigo-600 font-bold' : 'text-slate-500'
+                    }`}
+                  >
+                    <span className="text-lg leading-none mb-1">{tab.icon}</span>
+                    <span>{tab.label}</span>
+                  </button>
+                );
+              })}
+            </nav>
+          </div>
+        </div>
+      );
+    }
+
+    function Sidebar({ currentView, onSelectView, mobileOpen, onCloseMobile, profile }) {
+      const items = [
+        { id: 'planner', label: 'Study & Lecture Grid', icon: '📅' },
+        { id: 'dashboard', label: 'Dashboard', icon: '📊' },
+        { id: 'assistant', label: 'AI Study Assistant', icon: '💬' },
+        { id: 'tasks', label: 'Tasks & Homework', icon: '✅' },
+        { id: 'notes', label: 'Notes', icon: '📝' },
+        { id: 'exams', label: 'Exams Tracker', icon: '🎯' },
+        { id: 'progress', label: 'Progress & Analytics', icon: '📈' },
+        { id: 'settings', label: 'Settings', icon: '⚙️' },
+      ];
+
+      const navContent = (
+        <div className="flex flex-col h-full bg-white border-r border-slate-200">
+          <div className="h-16 flex items-center justify-between px-5 border-b border-slate-100">
+            <div className="flex items-center gap-2.5">
+              <div className="w-8 h-8 rounded-xl bg-indigo-600 flex items-center justify-center text-white font-bold text-sm shadow-sm">S</div>
+              <span className="font-bold text-lg tracking-tight text-slate-900">Study<span className="text-indigo-600">Sphere</span></span>
+            </div>
+            {mobileOpen && (
+              <button onClick={onCloseMobile} className="md:hidden text-slate-400 hover:text-slate-600 text-lg p-1">✕</button>
+            )}
+          </div>
+
+          <div className="p-3">
+            <div className="px-3 py-1.5 text-[10px] font-bold text-slate-400 uppercase tracking-wider">Navigation</div>
+            <nav className="space-y-1 mt-1">
+              {items.map(item => {
+                const active = currentView === item.id;
+                return (
+                  <button
+                    key={item.id}
+                    onClick={() => onSelectView(item.id)}
+                    className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-xs font-semibold transition ${
+                      active ? 'bg-indigo-50 text-indigo-700' : 'text-slate-600 hover:bg-slate-50 hover:text-slate-900'
+                    }`}
+                  >
+                    <span className="text-base">{item.icon}</span>
+                    <span>{item.label}</span>
+                  </button>
+                );
+              })}
+            </nav>
+          </div>
+        </div>
+      );
+
+      return (
+        <>
+          <aside className="hidden md:block w-64 flex-shrink-0">{navContent}</aside>
+          {mobileOpen && (
+            <div className="fixed inset-0 z-50 md:hidden flex">
+              <div className="fixed inset-0 bg-slate-900/50 backdrop-blur-xs" onClick={onCloseMobile}></div>
+              <div className="relative w-72 max-w-xs z-10">{navContent}</div>
+            </div>
+          )}
+        </>
+      );
+    }
+
+    function Header({ currentView, onToggleMobile }) {
+      return (
+        <header className="h-16 bg-white border-b border-slate-200 px-4 sm:px-8 flex items-center justify-between sticky top-0 z-30">
+          <div className="flex items-center gap-3">
+            <button onClick={onToggleMobile} className="md:hidden p-2 text-slate-600 hover:bg-slate-100 rounded-lg text-lg">
+              ☰
+            </button>
+            <h2 className="text-base sm:text-lg font-bold text-slate-900">Study & Lecture Planner</h2>
+          </div>
+        </header>
+      );
+    }
+
+    function DashboardView({ data, updateData, navTo, notify }) {
+      const todayStr = new Date().toISOString().split('T')[0];
+      const todaySessions = data.studyPlan.filter(s => s.date === todayStr);
+      const pendingTasks = data.tasks.filter(t => !t.completed);
+      const pendingBacklogs = (data.backlogs || []).filter(b => b.status === 'Pending');
+      const backlogHours = pendingBacklogs.reduce((sum, b) => sum + (parseFloat(b.durationHours) || 0), 0);
+
+      return (
+        <div className="space-y-4 sm:space-y-6">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-2 border-b border-slate-200">
+            <div>
+              <h1 className="text-xl sm:text-2xl font-bold text-slate-900 tracking-tight">Good day, {data.profile.name} 👋</h1>
+              <p className="text-xs text-slate-500 mt-0.5">Target: {data.profile.targetDailyHours}h study daily</p>
+            </div>
+            <button onClick={() => navTo('planner')} className="px-3 py-1.5 text-xs font-semibold bg-indigo-600 text-white rounded-lg shadow-sm">
+              Open Timetable Grid
+            </button>
+          </div>
+
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+            <Card className="p-3 sm:p-4">
+              <span className="text-[10px] font-semibold text-slate-500 uppercase">Today's Sessions</span>
+              <p className="text-lg sm:text-xl font-bold text-slate-900 mt-1">{todaySessions.length} Blocks</p>
+            </Card>
+            <Card className="p-3 sm:p-4">
+              <span className="text-[10px] font-semibold text-rose-500 uppercase">Backlog Debt</span>
+              <p className="text-lg sm:text-xl font-bold text-rose-600 mt-1">{backlogHours} hrs</p>
+            </Card>
+            <Card className="p-3 sm:p-4">
+              <span className="text-[10px] font-semibold text-slate-500 uppercase">Pending Tasks</span>
+              <p className="text-lg sm:text-xl font-bold text-slate-900 mt-1">{pendingTasks.length}</p>
+            </Card>
+            <Card className="p-3 sm:p-4">
+              <span className="text-[10px] font-semibold text-slate-500 uppercase">Tracked Exams</span>
+              <p className="text-lg sm:text-xl font-bold text-slate-900 mt-1">{data.exams.length}</p>
+            </Card>
+          </div>
+        </div>
+      );
+    }
+
+    // =========================================================================
+    // PLANNER VIEW (NOW WITH MANUAL "+ ADD DAY / LECTURE" BUTTON)
+    // =========================================================================
+    function PlannerView({ data, updateData, notify }) {
+      const [plannerTab, setPlannerTab] = useState('grid');
+
+      const [form, setForm] = useState({
+        examDate: '',
+        subject: '',
+        chaptersInput: '',
+        difficulty: 'Medium',
+        dailyTotalHours: data.profile.targetDailyHours || 7
+      });
+
+      // Quick In-Grid Lecture Addition Modal
+      const [gridLectureModal, setGridLectureModal] = useState({ open: false, sessionId: null, dayInfo: '' });
+      const [newGridLecture, setNewGridLecture] = useState({ name: '', time: '09:00 AM – 10:30 AM', duration: 1.5 });
+
+      // NEW: Manual Add Day & Lectures Modal
+      const [addDayModalOpen, setAddDayModalOpen] = useState(false);
+      const [newDayForm, setNewDayForm] = useState({
+        date: new Date().toISOString().split('T')[0],
+        subject: 'Physics',
+        chapter: 'Chapter / Unit 1',
+        durationHours: 2.0,
+        lectureName: 'Morning Lecture',
+        lectureTime: '09:00 AM – 10:30 AM',
+        lectureDuration: 1.5
+      });
+
+      // Backlog Modal
+      const [backlogModalOpen, setBacklogModalOpen] = useState(false);
+      const [backlogForm, setBacklogForm] = useState({
+        title: '',
+        subject: 'Physics',
+        durationHours: 2.0,
+        priority: 'High',
+        notes: ''
+      });
+
+      // OCR & Photos State
+      const fileInputRef = useRef(null);
+      const [uploadedPhotos, setUploadedPhotos] = useState([]);
+      const [isScanning, setIsScanning] = useState(false);
+      const [scanProgress, setScanProgress] = useState(0);
+
+      // In-Grid Lecture Addition
+      const openAddLectureToSession = (session) => {
+        setGridLectureModal({ 
+          open: true, 
+          sessionId: session.id, 
+          dayInfo: `${session.date} (${session.chapter})` 
+        });
+        setNewGridLecture({ name: '', time: '10:00 AM – 11:30 AM', duration: 1.5 });
+      };
+
+      const handleSaveGridLecture = (e) => {
+        e.preventDefault();
+        if (!newGridLecture.name.trim()) return;
+
+        updateData(prev => ({
+          ...prev,
+          studyPlan: prev.studyPlan.map(s => {
+            if (s.id === gridLectureModal.sessionId) {
+              const currentLectures = s.lectures || [];
+              return {
+                ...s,
+                lectures: [...currentLectures, { id: 'lec-' + Date.now(), ...newGridLecture }]
+              };
+            }
+            return s;
+          })
+        }));
+
+        setGridLectureModal({ open: false, sessionId: null, dayInfo: '' });
+        notify('Lecture added to that day in the table!');
+      };
+
+      const removeLectureFromSession = (sessionId, lectureId) => {
+        updateData(prev => ({
+          ...prev,
+          studyPlan: prev.studyPlan.map(s => {
+            if (s.id === sessionId) {
+              return {
+                ...s,
+                lectures: (s.lectures || []).filter(l => l.id !== lectureId)
+              };
+            }
+            return s;
+          })
+        }));
+        notify('Lecture removed');
+      };
+
+      // Handle Manual Day & Lecture Creation
+      const handleCreateDayWithLecture = (e) => {
+        e.preventDefault();
+        const newSession = {
+          id: 'sess-' + Date.now(),
+          date: newDayForm.date,
+          dayName: 'Custom Day',
+          subject: newDayForm.subject,
+          chapter: newDayForm.chapter,
+          durationHours: parseFloat(newDayForm.durationHours) || 2.0,
+          difficulty: 'Medium',
+          completed: false,
+          lectures: newDayForm.lectureName ? [
+            {
+              id: 'lec-' + Date.now(),
+              name: newDayForm.lectureName,
+              time: newDayForm.lectureTime,
+              duration: parseFloat(newDayForm.lectureDuration) || 1.5
+            }
+          ] : []
+        };
+
+        updateData(prev => ({ ...prev, studyPlan: [newSession, ...prev.studyPlan] }));
+        setAddDayModalOpen(false);
+        notify('New day and lecture added directly to your grid!');
+      };
+
+      // Multi-Photo OCR
+      const handleMultiPhotoUpload = async (e) => {
+        const files = Array.from(e.target.files || []);
+        if (files.length === 0) return;
+
+        setIsScanning(true);
+        setScanProgress(10);
+
+        try {
+          if (!window.Tesseract) throw new Error("OCR initializing. Please retry in a few seconds.");
+
+          let extractedTopics = [];
+          const newPhotos = [];
+
+          for (let i = 0; i < files.length; i++) {
+            const file = files[i];
+            const previewUrl = await new Promise(res => {
+              const reader = new FileReader();
+              reader.onload = () => res(reader.result);
+              reader.readAsDataURL(file);
+            });
+
+            newPhotos.push({ id: 'p-' + Date.now() + '-' + i, name: file.name, preview: previewUrl });
+            setScanProgress(Math.round(((i + 0.3) / files.length) * 100));
+
+            const result = await Tesseract.recognize(file, 'eng');
+            const lines = (result.data.text || '')
+              .split('\n')
+              .map(l => l.trim())
+              .filter(l => l.length > 2)
+              .map(l => l.replace(/^(\d+[\.\)]|chapter\s*\d+:?|unit\s*\d+:?|module\s*\d+:?|[-•*])\s*/i, ''))
+              .filter(l => l.length > 2 && !/^(syllabus|index|contents|page)/i.test(l));
+
+            extractedTopics.push(...lines);
+          }
+
+          setUploadedPhotos(prev => [...prev, ...newPhotos]);
+
+          if (extractedTopics.length > 0) {
+            const formatted = extractedTopics.join(', ');
+            setForm(prev => ({
+              ...prev,
+              chaptersInput: prev.chaptersInput ? `${prev.chaptersInput}, ${formatted}` : formatted
+            }));
+            notify(`Extracted ${extractedTopics.length} syllabus topics from photos!`);
+          } else {
+            notify(`Scanned ${files.length} photo(s).`);
+          }
+        } catch (err) {
+          notify('OCR scan error: ' + err.message);
+        } finally {
+          setIsScanning(false);
+          setScanProgress(100);
+          if (fileInputRef.current) fileInputRef.current.value = '';
+        }
+      };
+
+      // Timetable generation from Left Form
+      const generateSchedule = (e) => {
+        e.preventDefault();
+        const chapters = form.chaptersInput.split(',').map(c => c.trim()).filter(Boolean);
+        if (chapters.length === 0) {
+          notify('Please enter or scan at least one chapter');
+          return;
+        }
+
+        const today = new Date();
+        const targetDate = new Date(form.examDate);
+        const days = Math.max(1, Math.ceil((targetDate - today) / (1000 * 3600 * 24)));
+        const mult = form.difficulty === 'Hard' ? 2.5 : form.difficulty === 'Medium' ? 1.8 : 1.2;
+
+        const newSessions = chapters.map((ch, idx) => {
+          const d = new Date();
+          d.setDate(d.getDate() + (idx % days));
+          return {
+            id: 'sess-' + Date.now() + '-' + idx,
+            date: d.toISOString().split('T')[0],
+            dayName: idx === 0 ? 'Today' : `Day +${idx % days}`,
+            subject: form.subject || 'General Subject',
+            chapter: ch,
+            lectures: [],
+            durationHours: mult,
+            difficulty: form.difficulty,
+            completed: false
+          };
+        });
+
+        updateData(prev => ({ ...prev, studyPlan: newSessions }));
+        notify(`Timetable generated with ${newSessions.length} days! Click "+ Add Lecture" on any row.`);
+      };
+
+      const toggleSession = (id) => {
+        updateData(prev => ({
+          ...prev,
+          studyPlan: prev.studyPlan.map(s => s.id === id ? { ...s, completed: !s.completed } : s)
+        }));
+      };
+
+      const deleteSession = (id) => {
+        updateData(prev => ({ ...prev, studyPlan: prev.studyPlan.filter(s => s.id !== id) }));
+        notify('Day removed from table');
+      };
+
+      // Backlog Planner Logic
+      const handleAddBacklog = (e) => {
+        e.preventDefault();
+        if (!backlogForm.title.trim()) return;
+
+        const newB = {
+          id: 'b-' + Date.now(),
+          ...backlogForm,
+          durationHours: parseFloat(backlogForm.durationHours) || 1.5,
+          status: 'Pending'
+        };
+
+        updateData(prev => ({ ...prev, backlogs: [newB, ...(prev.backlogs || [])] }));
+        setBacklogForm({ title: '', subject: 'Physics', durationHours: 2.0, priority: 'High', notes: '' });
+        setBacklogModalOpen(false);
+        notify('Backlog item logged!');
+      };
+
+      const toggleBacklogStatus = (id) => {
+        updateData(prev => ({
+          ...prev,
+          backlogs: (prev.backlogs || []).map(b => b.id === id ? { ...b, status: b.status === 'Pending' ? 'Cleared' : 'Pending' } : b)
+        }));
+      };
+
+      const deleteBacklog = (id) => {
+        updateData(prev => ({
+          ...prev,
+          backlogs: (prev.backlogs || []).filter(b => b.id !== id)
+        }));
+        notify('Backlog item deleted');
+      };
+
+      const autoDistributeBacklogs = () => {
+        const pending = (data.backlogs || []).filter(b => b.status === 'Pending');
+        if (pending.length === 0) {
+          notify('No pending backlogs to distribute!');
+          return;
+        }
+        if (data.studyPlan.length === 0) {
+          notify('Add at least one day or generate schedule first so backlogs have days to attach to!');
+          return;
+        }
+
+        let scheduleIndex = 0;
+        const updatedSchedule = [...data.studyPlan];
+
+        pending.forEach(b => {
+          const targetSession = updatedSchedule[scheduleIndex % updatedSchedule.length];
+          targetSession.lectures = [
+            ...(targetSession.lectures || []),
+            {
+              id: 'backlog-lec-' + b.id,
+              name: `🔥 BACKLOG: ${b.title}`,
+              time: '05:00 PM – 06:30 PM',
+              duration: b.durationHours,
+              isBacklog: true
+            }
+          ];
+          scheduleIndex++;
+        });
+
+        updateData(prev => ({
+          ...prev,
+          studyPlan: updatedSchedule,
+          backlogs: prev.backlogs.map(b => b.status === 'Pending' ? { ...b, status: 'Scheduled' } : b)
+        }));
+
+        notify(`Distributed ${pending.length} backlog block(s) into your timetable!`);
+        setPlannerTab('grid');
+      };
+
+      const totalBacklogDebt = useMemo(() => {
+        return (data.backlogs || [])
+          .filter(b => b.status === 'Pending' || b.status === 'Scheduled')
+          .reduce((sum, b) => sum + (parseFloat(b.durationHours) || 0), 0);
+      }, [data.backlogs]);
+
+      return (
+        <div className="space-y-4 sm:space-y-6">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-2 border-b border-slate-200">
+            <div>
+              <h1 className="text-xl sm:text-2xl font-bold text-slate-900 tracking-tight">AI Multi-Lecture & Backlog Planner</h1>
+              <p className="text-xs text-slate-500 mt-0.5">
+                Add lectures directly inside the table rows, and track/clear your backlogs without confusion.
+              </p>
+            </div>
+
+            {/* Sub-Tab Navigation */}
+            <div className="flex items-center gap-1.5 bg-slate-100 p-1 rounded-xl self-start sm:self-auto text-xs font-semibold">
+              <button
+                onClick={() => setPlannerTab('grid')}
+                className={`px-3 py-1.5 rounded-lg transition ${plannerTab === 'grid' ? 'bg-white text-indigo-700 shadow-xs' : 'text-slate-600 hover:text-slate-900'}`}
+              >
+                📅 Study Grid ({data.studyPlan.length})
+              </button>
+              <button
+                onClick={() => setPlannerTab('backlog')}
+                className={`px-3 py-1.5 rounded-lg transition flex items-center gap-1 ${plannerTab === 'backlog' ? 'bg-white text-rose-600 shadow-xs' : 'text-slate-600 hover:text-slate-900'}`}
+              >
+                <span>🔥 Backlog Engine</span>
+                {totalBacklogDebt > 0 && (
+                  <span className="px-1.5 py-0.2 bg-rose-100 text-rose-700 text-[10px] rounded-full font-bold">{totalBacklogDebt}h</span>
+                )}
+              </button>
+            </div>
+          </div>
+
+          {/* TAB 1: STUDY GRID VIEW */}
+          {plannerTab === 'grid' && (
+            <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 sm:gap-6">
+              {/* Generator Column */}
+              <Card className="p-4 sm:p-5 h-fit space-y-4">
+                <h3 className="font-bold text-slate-900 text-sm pb-2 border-b border-slate-100">Batch Syllabus Generator</h3>
+
+                {/* Multi-Photo OCR Upload */}
+                <div className="p-3 bg-indigo-50/60 border border-indigo-100 rounded-xl space-y-2">
+                  <span className="text-xs font-bold text-indigo-900 flex items-center gap-1">
+                    📸 Upload Syllabus Photos (OCR)
+                  </span>
+                  <input 
+                    type="file" 
+                    ref={fileInputRef} 
+                    multiple 
+                    accept="image/*" 
+                    onChange={handleMultiPhotoUpload} 
+                    className="hidden" 
+                    id="multi-ocr-files"
+                  />
+                  <label 
+                    htmlFor="multi-ocr-files" 
+                    className="flex flex-col items-center justify-center p-3 border-2 border-dashed border-indigo-200 bg-white rounded-xl cursor-pointer hover:border-indigo-400 text-center"
+                  >
+                    <span className="text-xs font-semibold text-indigo-600">+ Select Photos (Index, Syllabi)</span>
+                    <span className="text-[10px] text-slate-400">Scan multiple pages at once</span>
+                  </label>
+
+                  {uploadedPhotos.length > 0 && (
+                    <div className="grid grid-cols-2 gap-1.5 pt-1">
+                      {uploadedPhotos.map(photo => (
+                        <div key={photo.id} className="p-1 rounded bg-white border border-slate-200 flex items-center gap-1.5">
+                          <img src={photo.preview} alt="Thumb" className="w-6 h-6 object-cover rounded" />
+                          <span className="text-[10px] text-slate-700 truncate flex-1">{photo.name}</span>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+
+                  {isScanning && (
+                    <div className="space-y-1 pt-1">
+                      <div className="flex justify-between text-[11px] font-semibold text-indigo-700">
+                        <span>Scanning with OCR...</span>
+                        <span>{scanProgress}%</span>
+                      </div>
+                      <div className="w-full bg-indigo-100 h-1 rounded-full overflow-hidden">
+                        <div className="bg-indigo-600 h-1 rounded-full" style={{ width: `${scanProgress}%` }}></div>
+                      </div>
+                    </div>
+                  )}
+                </div>
+
+                <form onSubmit={generateSchedule} className="space-y-3">
+                  <div>
+                    <label className="block text-xs font-semibold text-slate-700 mb-1">Target Exam Date</label>
+                    <input 
+                      type="date" 
+                      value={form.examDate} 
+                      onChange={e => setForm({...form, examDate: e.target.value})} 
+                      required 
+                      className="w-full text-xs px-3 py-2 border border-slate-300 rounded-lg"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-xs font-semibold text-slate-700 mb-1">Course / Subject</label>
+                    <input 
+                      type="text" 
+                      placeholder="e.g. Electrical Engineering"
+                      value={form.subject} 
+                      onChange={e => setForm({...form, subject: e.target.value})} 
+                      required 
+                      className="w-full text-xs px-3 py-2 border border-slate-300 rounded-lg"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-xs font-semibold text-slate-700 mb-1">Chapters / Topics</label>
+                    <textarea 
+                      rows={3} 
+                      placeholder="Circuit Analysis, Magnetism (or upload photo above)"
+                      value={form.chaptersInput} 
+                      onChange={e => setForm({...form, chaptersInput: e.target.value})} 
+                      required 
+                      className="w-full text-xs px-3 py-2 border border-slate-300 rounded-lg"
+                    />
+                  </div>
+
+                  <button 
+                    type="submit" 
+                    disabled={isScanning}
+                    className="w-full py-2.5 bg-indigo-600 hover:bg-indigo-700 text-white font-semibold text-xs rounded-xl shadow-sm transition"
+                  >
+                    Generate Days from Chapters
+                  </button>
+                </form>
+              </Card>
+
+              {/* Study Grid Table Column */}
+              <div className="lg:col-span-2 space-y-4">
+                <Card className="p-4 sm:p-5">
+                  <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 pb-3 border-b border-slate-100 mb-3">
+                    <div>
+                      <h3 className="font-bold text-slate-900 text-sm">Study Schedule Grid</h3>
+                      <p className="text-[11px] text-slate-500">Manage multiple classes & lectures per day.</p>
+                    </div>
+
+                    <div className="flex flex-wrap items-center gap-2">
+                      {/* Prominent Direct Manual Add Day & Lecture Button */}
+                      <button
+                        onClick={() => setAddDayModalOpen(true)}
+                        className="text-xs font-bold text-white bg-indigo-600 hover:bg-indigo-700 px-3 py-1.5 rounded-lg flex items-center gap-1 shadow-sm transition"
+                      >
+                        <span>+</span> Add Day / Lecture
+                      </button>
+
+                      <button
+                        onClick={autoDistributeBacklogs}
+                        className="text-xs font-semibold text-rose-700 bg-rose-50 border border-rose-200 px-2.5 py-1.5 rounded-lg hover:bg-rose-100 transition shadow-xs"
+                      >
+                        ⚡ Slot Backlogs Here
+                      </button>
+                    </div>
+                  </div>
+
+                  <div className="overflow-x-auto">
+                    <table className="min-w-full divide-y divide-slate-200 text-left text-xs">
+                      <thead className="bg-slate-50 text-slate-500 uppercase text-[10px]">
+                        <tr>
+                          <th className="py-2.5 px-3">Status</th>
+                          <th className="py-2.5 px-3">Date</th>
+                          <th className="py-2.5 px-3">Subject & Chapter</th>
+                          <th className="py-2.5 px-3 min-w-[220px]">Lectures & Classes in this Day</th>
+                          <th className="py-2.5 px-3">Study Time</th>
+                          <th className="py-2.5 px-3 text-right">Action</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-slate-100 bg-white">
+                        {data.studyPlan.map(s => {
+                          const lecturesList = s.lectures || [];
+                          const totalDayLectureHrs = lecturesList.reduce((acc, l) => acc + (parseFloat(l.duration) || 0), 0);
+
+                          return (
+                            <tr key={s.id} className="hover:bg-slate-50">
+                              <td className="py-2.5 px-3">
+                                <input 
+                                  type="checkbox" 
+                                  checked={s.completed} 
+                                  onChange={() => toggleSession(s.id)}
+                                  className="w-4 h-4 rounded text-indigo-600"
+                                />
+                              </td>
+                              <td className="py-2.5 px-3 font-semibold whitespace-nowrap">
+                                <div>{s.date}</div>
+                                <div className="text-[10px] text-slate-400 font-normal">{s.dayName}</div>
+                              </td>
+                              <td className="py-2.5 px-3">
+                                <span className="font-bold text-slate-800">{s.chapter}</span>
+                                <span className="block text-[10px] text-indigo-600 uppercase font-semibold">{s.subject}</span>
+                              </td>
+                              <td className="py-2.5 px-3">
+                                <div className="flex flex-col gap-1.5">
+                                  {/* List of lectures in this day */}
+                                  <div className="flex flex-wrap gap-1 items-center">
+                                    {lecturesList.map((l, i) => (
+                                      <span 
+                                        key={l.id || i} 
+                                        className={`inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-semibold border ${
+                                          l.isBacklog ? 'bg-rose-50 text-rose-700 border-rose-200' : 'bg-violet-50 text-violet-700 border-violet-200'
+                                        }`}
+                                      >
+                                        <span>{l.name} ({l.duration}h)</span>
+                                        <button 
+                                          onClick={() => removeLectureFromSession(s.id, l.id)}
+                                          className="text-slate-400 hover:text-rose-600 font-bold ml-0.5"
+                                          title="Remove this lecture"
+                                        >✕</button>
+                                      </span>
+                                    ))}
+
+                                    {/* Prominent IN-GRID + Add Lecture Button */}
+                                    <button
+                                      onClick={() => openAddLectureToSession(s)}
+                                      className="text-[10px] font-bold text-indigo-700 bg-indigo-50 hover:bg-indigo-100 border border-indigo-300 px-2 py-0.5 rounded-md flex items-center gap-1 shadow-2xs"
+                                    >
+                                      <span>+</span> Add Lecture
+                                    </button>
+                                  </div>
+
+                                  {lecturesList.length > 0 && (
+                                    <span className="text-[9px] text-slate-400">
+                                      Total class time: {totalDayLectureHrs}h
+                                    </span>
+                                  )}
+                                </div>
+                              </td>
+                              <td className="py-2.5 px-3 whitespace-nowrap font-semibold">{s.durationHours}h</td>
+                              <td className="py-2.5 px-3 text-right">
+                                <button onClick={() => deleteSession(s.id)} className="text-rose-500 font-bold hover:text-rose-700 p-1">✕</button>
+                              </td>
+                            </tr>
+                          );
+                        })}
+                        {data.studyPlan.length === 0 && (
+                          <tr>
+                            <td colSpan="6" className="text-center py-12 text-xs text-slate-500">
+                              <p className="font-semibold text-slate-700 text-sm mb-1">Your grid is empty</p>
+                              <p className="text-slate-400 mb-4">Click below to add a day and schedule lectures manually:</p>
+                              <button
+                                onClick={() => setAddDayModalOpen(true)}
+                                className="px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white font-bold text-xs rounded-xl shadow-sm inline-flex items-center gap-1.5"
+                              >
+                                <span>+</span> Add Day & Lectures Manually
+                              </button>
+                            </td>
+                          </tr>
+                        )}
+                      </tbody>
+                    </table>
+                  </div>
+                </Card>
+              </div>
+            </div>
+          )}
+
+          {/* TAB 2: BACKLOG PLANNER ENGINE */}
+          {plannerTab === 'backlog' && (
+            <div className="space-y-4">
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+                <Card className="p-4 bg-rose-50/50 border-rose-200">
+                  <span className="text-xs font-semibold text-rose-700 uppercase tracking-wide">Backlog Debt</span>
+                  <p className="text-2xl font-black text-rose-600 mt-1">{totalBacklogDebt} Hours</p>
+                  <p className="text-[11px] text-rose-500 mt-0.5">Total pending lecture & module debt</p>
+                </Card>
+                <Card className="p-4">
+                  <span className="text-xs font-semibold text-slate-500 uppercase tracking-wide">Pending Topics</span>
+                  <p className="text-2xl font-black text-slate-900 mt-1">
+                    {(data.backlogs || []).filter(b => b.status === 'Pending').length} Classes
+                  </p>
+                  <p className="text-[11px] text-slate-500 mt-0.5">Need clearance scheduling</p>
+                </Card>
+                <Card className="p-4 flex flex-col justify-between">
+                  <div>
+                    <span className="text-xs font-semibold text-indigo-700 uppercase tracking-wide">Auto-Distribution</span>
+                    <p className="text-xs text-slate-600 mt-1">Spread pending backlogs into timetable schedule days.</p>
+                  </div>
+                  <button
+                    onClick={autoDistributeBacklogs}
+                    className="mt-2 w-full py-2 bg-rose-600 hover:bg-rose-700 text-white font-semibold text-xs rounded-lg shadow-sm transition"
+                  >
+                    ⚡ Auto-Slot Backlogs into Timetable
+                  </button>
+                </Card>
+              </div>
+
+              <Card className="p-4 sm:p-5 space-y-4">
+                <div className="flex items-center justify-between pb-3 border-b border-slate-100">
+                  <div>
+                    <h3 className="font-bold text-slate-900 text-sm">Missed Lectures & Backlog Tracker</h3>
+                    <p className="text-[11px] text-slate-500">Record any class you skipped or concept you fell behind on.</p>
+                  </div>
+                  <button
+                    onClick={() => setBacklogModalOpen(true)}
+                    className="px-3 py-1.5 bg-indigo-600 hover:bg-indigo-700 text-white font-semibold text-xs rounded-lg shadow-xs"
+                  >
+                    + Log New Backlog
+                  </button>
+                </div>
+
+                <div className="divide-y divide-slate-100">
+                  {(data.backlogs || []).map(b => (
+                    <div key={b.id} className="py-3 flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                      <div className="flex items-start gap-3">
+                        <input
+                          type="checkbox"
+                          checked={b.status === 'Cleared'}
+                          onChange={() => toggleBacklogStatus(b.id)}
+                          className="mt-1 w-4 h-4 rounded text-indigo-600 border-slate-300"
+                        />
+                        <div>
+                          <div className="flex items-center gap-2">
+                            <p className={`text-xs font-bold ${b.status === 'Cleared' ? 'line-through text-slate-400' : 'text-slate-900'}`}>
+                              {b.title}
+                            </p>
+                            <Badge variant={b.priority === 'High' ? 'danger' : 'warning'}>{b.priority}</Badge>
+                            <Badge variant={b.status === 'Cleared' ? 'teal' : b.status === 'Scheduled' ? 'violet' : 'neutral'}>
+                              {b.status}
+                            </Badge>
+                          </div>
+                          <p className="text-[11px] text-slate-500 mt-0.5">
+                            {b.subject} • {b.durationHours}h estimated • {b.notes || 'No extra notes'}
+                          </p>
+                        </div>
+                      </div>
+
+                      <div className="flex items-center gap-2 self-end sm:self-center">
+                        <button
+                          onClick={() => toggleBacklogStatus(b.id)}
+                          className="text-[11px] font-semibold text-slate-600 hover:text-indigo-600 bg-slate-50 border border-slate-200 px-2.5 py-1 rounded-lg"
+                        >
+                          {b.status === 'Cleared' ? 'Mark Pending' : 'Mark Cleared'}
+                        </button>
+                        <button
+                          onClick={() => deleteBacklog(b.id)}
+                          className="text-slate-400 hover:text-rose-600 font-bold p-1 text-sm"
+                        >
+                          ✕
+                        </button>
+                      </div>
+                    </div>
+                  ))}
+
+                  {(data.backlogs || []).length === 0 && (
+                    <div className="text-center py-10 text-xs text-slate-400">
+                      No backlogs logged! Click "+ Log New Backlog" to add missed classes.
+                    </div>
+                  )}
+                </div>
+              </Card>
+            </div>
+          )}
+
+          {/* MANUAL CREATE DAY & LECTURES MODAL */}
+          <Modal
+            isOpen={addDayModalOpen}
+            onClose={() => setAddDayModalOpen(false)}
+            title="Add Day & Lecture to Timetable"
+          >
+            <form onSubmit={handleCreateDayWithLecture} className="space-y-3">
+              <div>
+                <label className="block text-xs font-semibold text-slate-700 mb-1">Date</label>
+                <input
+                  type="date"
+                  value={newDayForm.date}
+                  onChange={e => setNewDayForm({ ...newDayForm, date: e.target.value })}
+                  required
+                  className="w-full text-xs px-3 py-2 border border-slate-300 rounded-lg"
+                />
+              </div>
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-xs font-semibold text-slate-700 mb-1">Subject</label>
+                  <input
+                    type="text"
+                    placeholder="e.g. Physics"
+                    value={newDayForm.subject}
+                    onChange={e => setNewDayForm({ ...newDayForm, subject: e.target.value })}
+                    required
+                    className="w-full text-xs px-3 py-2 border border-slate-300 rounded-lg"
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs font-semibold text-slate-700 mb-1">Chapter / Topic</label>
+                  <input
+                    type="text"
+                    placeholder="e.g. Thermodynamics"
+                    value={newDayForm.chapter}
+                    onChange={e => setNewDayForm({ ...newDayForm, chapter: e.target.value })}
+                    required
+                    className="w-full text-xs px-3 py-2 border border-slate-300 rounded-lg"
+                  />
+                </div>
+              </div>
+
+              {/* Lecture info */}
+              <div className="p-3 bg-violet-50/60 border border-violet-100 rounded-xl space-y-2">
+                <span className="text-xs font-bold text-violet-900 block">Class / Lecture for this Day</span>
+                <div>
+                  <label className="block text-[11px] font-semibold text-slate-600 mb-0.5">Lecture Name</label>
+                  <input
+                    type="text"
+                    placeholder="e.g. Morning Lecture / Physics Lab"
+                    value={newDayForm.lectureName}
+                    onChange={e => setNewDayForm({ ...newDayForm, lectureName: e.target.value })}
+                    className="w-full text-xs px-2.5 py-1.5 border border-slate-300 rounded-lg bg-white"
+                  />
+                </div>
+                <div className="grid grid-cols-2 gap-2">
+                  <div>
+                    <label className="block text-[11px] font-semibold text-slate-600 mb-0.5">Time Slot</label>
+                    <input
+                      type="text"
+                      placeholder="09:00 AM – 10:30 AM"
+                      value={newDayForm.lectureTime}
+                      onChange={e => setNewDayForm({ ...newDayForm, lectureTime: e.target.value })}
+                      className="w-full text-xs px-2.5 py-1.5 border border-slate-300 rounded-lg bg-white"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-[11px] font-semibold text-slate-600 mb-0.5">Duration (Hours)</label>
+                    <input
+                      type="number"
+                      step="0.5"
+                      min="0.5"
+                      max="6"
+                      value={newDayForm.lectureDuration}
+                      onChange={e => setNewDayForm({ ...newDayForm, lectureDuration: e.target.value })}
+                      className="w-full text-xs px-2.5 py-1.5 border border-slate-300 rounded-lg bg-white"
+                    />
+                  </div>
+                </div>
+              </div>
+
+              <div>
+                <label className="block text-xs font-semibold text-slate-700 mb-1">Self-Study Revision Time (Hours)</label>
+                <input
+                  type="number"
+                  step="0.5"
+                  min="0.5"
+                  max="12"
+                  value={newDayForm.durationHours}
+                  onChange={e => setNewDayForm({ ...newDayForm, durationHours: e.target.value })}
+                  className="w-full text-xs px-3 py-2 border border-slate-300 rounded-lg"
+                />
+              </div>
+
+              <div className="flex justify-end gap-2 pt-2">
+                <button
+                  type="button"
+                  onClick={() => setAddDayModalOpen(false)}
+                  className="px-3 py-1.5 text-xs text-slate-600"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  className="px-4 py-1.5 text-xs bg-indigo-600 text-white font-semibold rounded-lg"
+                >
+                  Add Day to Grid
+                </button>
+              </div>
+            </form>
+          </Modal>
+
+          {/* IN-GRID ADD EXTRA LECTURE MODAL */}
+          <Modal
+            isOpen={gridLectureModal.open}
+            onClose={() => setGridLectureModal({ open: false, sessionId: null, dayInfo: '' })}
+            title={`Add Extra Lecture for ${gridLectureModal.dayInfo}`}
+          >
+            <form onSubmit={handleSaveGridLecture} className="space-y-3">
+              <div>
+                <label className="block text-xs font-semibold text-slate-700 mb-1">Lecture / Class Name</label>
+                <input
+                  type="text"
+                  placeholder="e.g. Organic Chemistry Lab, Physics 101, Doubt Session"
+                  value={newGridLecture.name}
+                  onChange={e => setNewGridLecture({ ...newGridLecture, name: e.target.value })}
+                  required
+                  className="w-full text-xs px-3 py-2 border border-slate-300 rounded-lg"
+                />
+              </div>
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-xs font-semibold text-slate-700 mb-1">Time Slot</label>
+                  <input
+                    type="text"
+                    placeholder="e.g. 09:00 AM – 10:30 AM"
+                    value={newGridLecture.time}
+                    onChange={e => setNewGridLecture({ ...newGridLecture, time: e.target.value })}
+                    className="w-full text-xs px-3 py-2 border border-slate-300 rounded-lg"
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs font-semibold text-slate-700 mb-1">Duration (Hours)</label>
+                  <input
+                    type="number"
+                    step="0.5"
+                    min="0.5"
+                    max="6"
+                    value={newGridLecture.duration}
+                    onChange={e => setNewGridLecture({ ...newGridLecture, duration: parseFloat(e.target.value) || 1 })}
+                    className="w-full text-xs px-3 py-2 border border-slate-300 rounded-lg"
+                  />
+                </div>
+              </div>
+              <div className="flex justify-end gap-2 pt-2">
+                <button
+                  type="button"
+                  onClick={() => setGridLectureModal({ open: false, sessionId: null, dayInfo: '' })}
+                  className="px-3 py-1.5 text-xs text-slate-600"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  className="px-4 py-1.5 text-xs bg-indigo-600 text-white font-semibold rounded-lg"
+                >
+                  Add to Day
+                </button>
+              </div>
+            </form>
+          </Modal>
+
+          {/* ADD BACKLOG ITEM MODAL */}
+          <Modal
+            isOpen={backlogModalOpen}
+            onClose={() => setBacklogModalOpen(false)}
+            title="Log Missed Lecture or Backlog"
+          >
+            <form onSubmit={handleAddBacklog} className="space-y-3">
+              <div>
+                <label className="block text-xs font-semibold text-slate-700 mb-1">Topic / Lecture Name</label>
+                <input
+                  type="text"
+                  placeholder="e.g. Electromagnetic Induction Lab 2"
+                  value={backlogForm.title}
+                  onChange={e => setBacklogForm({ ...backlogForm, title: e.target.value })}
+                  required
+                  className="w-full text-xs px-3 py-2 border border-slate-300 rounded-lg"
+                />
+              </div>
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-xs font-semibold text-slate-700 mb-1">Subject</label>
+                  <input
+                    type="text"
+                    placeholder="e.g. Physics"
+                    value={backlogForm.subject}
+                    onChange={e => setBacklogForm({ ...backlogForm, subject: e.target.value })}
+                    required
+                    className="w-full text-xs px-3 py-2 border border-slate-300 rounded-lg"
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs font-semibold text-slate-700 mb-1">Estimated Hours</label>
+                  <input
+                    type="number"
+                    step="0.5"
+                    min="0.5"
+                    max="10"
+                    value={backlogForm.durationHours}
+                    onChange={e => setBacklogForm({ ...backlogForm, durationHours: e.target.value })}
+                    required
+                    className="w-full text-xs px-3 py-2 border border-slate-300 rounded-lg"
+                  />
+                </div>
+              </div>
+              <div className="flex justify-end gap-2 pt-2">
+                <button
+                  type="button"
+                  onClick={() => setBacklogModalOpen(false)}
+                  className="px-3 py-1.5 text-xs text-slate-600"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  className="px-4 py-1.5 text-xs bg-rose-600 text-white font-semibold rounded-lg"
+                >
+                  Record Backlog
+                </button>
+              </div>
+            </form>
+          </Modal>
+        </div>
+      );
+    }
+
+    function AssistantView({ profile }) {
+      const [messages, setMessages] = useState([
+        { role: 'assistant', text: `Hi ${profile.name}! Ask any question or request a study summary.` }
+      ]);
+      const [input, setInput] = useState('');
+
+      const handleSend = () => {
+        if (!input.trim()) return;
+        setMessages(prev => [
+          ...prev, 
+          { role: 'user', text: input }, 
+          { role: 'assistant', text: `StudySphere assistant prompt received for: "${input}". Connect your API key in Settings to stream full LLM responses.` }
+        ]);
+        setInput('');
+      };
+
+      return (
+        <div className="flex flex-col h-[calc(100vh-11rem)] space-y-3">
+          <Card className="flex-1 p-4 overflow-y-auto space-y-3">
+            {messages.map((m, idx) => (
+              <div key={idx} className={`flex flex-col ${m.role === 'user' ? 'items-end' : 'items-start'}`}>
+                <div className={`max-w-[85%] rounded-xl px-4 py-2.5 text-xs ${
+                  m.role === 'user' ? 'bg-indigo-600 text-white' : 'bg-slate-100 text-slate-900'
+                }`}>
+                  {m.text}
+                </div>
+              </div>
+            ))}
+          </Card>
+          <div className="flex gap-2">
+            <input 
+              type="text" 
+              value={input} 
+              onChange={e => setInput(e.target.value)} 
+              placeholder="Type a concept, question, or formula..." 
+              className="flex-1 text-xs px-3.5 py-2.5 border border-slate-300 rounded-xl bg-white" 
+            />
+            <button onClick={handleSend} className="px-4 py-2 bg-indigo-600 text-white text-xs font-semibold rounded-xl">Send</button>
+          </div>
+        </div>
+      );
+    }
+
+    function TasksView({ tasks, updateData, notify }) {
+      const [title, setTitle] = useState('');
+      const addTask = (e) => {
+        e.preventDefault();
+        if (!title.trim()) return;
+        updateData(prev => ({
+          ...prev,
+          tasks: [{ id: 'task-' + Date.now(), title, subject: 'General', dueDate: 'Upcoming', completed: false, priority: 'Medium' }, ...prev.tasks]
+        }));
+        setTitle('');
+        notify('Task added');
+      };
+
+      return (
+        <div className="space-y-4 max-w-2xl mx-auto">
+          <h1 className="text-xl font-bold">Tasks & Assignments</h1>
+          <form onSubmit={addTask} className="flex gap-2">
+            <input 
+              type="text" 
+              value={title} 
+              onChange={e => setTitle(e.target.value)} 
+              placeholder="Add homework or study task..." 
+              className="flex-1 text-xs px-3 py-2 border border-slate-300 rounded-lg bg-white" 
+            />
+            <button type="submit" className="px-4 py-2 bg-indigo-600 text-white text-xs font-semibold rounded-lg">+ Add</button>
+          </form>
+          <Card className="divide-y divide-slate-100">
+            {tasks.map(t => (
+              <div key={t.id} className="p-3 flex items-center justify-between text-xs">
+                <div className="flex items-center gap-2.5">
+                  <input 
+                    type="checkbox" 
+                    checked={t.completed} 
+                    onChange={() => updateData(p => ({
+                      ...p,
+                      tasks: p.tasks.map(x => x.id === t.id ? { ...x, completed: !x.completed } : x)
+                    }))} 
+                  />
+                  <span className={t.completed ? 'line-through text-slate-400' : ''}>{t.title}</span>
+                </div>
+                <button onClick={() => updateData(p => ({ ...p, tasks: p.tasks.filter(x => x.id !== t.id) }))} className="text-rose-500 font-bold">✕</button>
+              </div>
+            ))}
+          </Card>
+        </div>
+      );
+    }
+
+    function NotesView({ notes, updateData, notify }) {
+      const [title, setTitle] = useState('');
+      const [content, setContent] = useState('');
+
+      const addNote = () => {
+        if (!title.trim()) return;
+        updateData(p => ({ 
+          ...p, 
+          notes: [{ id: 'n-' + Date.now(), title, content, updatedAt: 'Today', subject: 'General' }, ...p.notes] 
+        }));
+        setTitle(''); 
+        setContent('');
+        notify('Note saved');
+      };
+
+      return (
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+          <Card className="p-4 space-y-3">
+            <h3 className="font-bold text-sm">Create Note</h3>
+            <input type="text" placeholder="Title" value={title} onChange={e => setTitle(e.target.value)} className="w-full text-xs px-3 py-2 border rounded-lg" />
+            <textarea rows={5} placeholder="Write lecture points or formulas..." value={content} onChange={e => setContent(e.target.value)} className="w-full text-xs px-3 py-2 border rounded-lg" />
+            <button onClick={addNote} className="px-4 py-2 bg-indigo-600 text-white font-semibold rounded-lg">Save Note</button>
+          </Card>
+          <div className="space-y-3">
+            {notes.map(n => (
+              <Card key={n.id} className="p-3.5 space-y-1">
+                <h4 className="font-bold text-xs">{n.title}</h4>
+                <p className="text-xs text-slate-600 whitespace-pre-wrap">{n.content}</p>
+              </Card>
+            ))}
+          </div>
+        </div>
+      );
+    }
+
+    function ExamsView({ exams, updateData, notify }) {
+      const [title, setTitle] = useState('');
+      const [date, setDate] = useState('');
+
+      const addExam = (e) => {
+        e.preventDefault();
+        updateData(p => ({ 
+          ...p, 
+          exams: [{ id: 'ex-' + Date.now(), title, subject: 'Course', date, progress: 20 }, ...p.exams] 
+        }));
+        setTitle(''); 
+        setDate('');
+        notify('Exam added');
+      };
+
+      return (
+        <div className="space-y-4 max-w-xl mx-auto">
+          <h1 className="text-xl font-bold">Exams Countdown</h1>
+          <form onSubmit={addExam} className="flex gap-2">
+            <input type="text" placeholder="Exam Name" value={title} onChange={e => setTitle(e.target.value)} required className="flex-1 text-xs px-3 py-2 border rounded-lg" />
+            <input type="date" value={date} onChange={e => setDate(e.target.value)} required className="text-xs px-3 py-2 border rounded-lg" />
+            <button type="submit" className="px-4 py-2 bg-indigo-600 text-white text-xs font-semibold rounded-lg">Add</button>
+          </form>
+          {exams.map(ex => (
+            <Card key={ex.id} className="p-4 flex justify-between items-center text-xs">
+              <div>
+                <p className="font-bold text-sm">{ex.title}</p>
+                <span className="text-slate-500">Date: {ex.date}</span>
+              </div>
+              <button onClick={() => updateData(p => ({ ...p, exams: p.exams.filter(x => x.id !== ex.id) }))} className="text-rose-500 font-bold">Delete</button>
+            </Card>
+          ))}
+        </div>
+      );
+    }
+
+    function ProgressView({ data }) {
+      const taskDone = data.tasks.filter(t => t.completed).length;
+      return (
+        <div className="space-y-4">
+          <h1 className="text-xl font-bold">Progress & Stats</h1>
+          <div className="grid grid-cols-2 gap-4">
+            <Card className="p-4">
+              <p className="text-2xl font-bold">{taskDone} / {data.tasks.length}</p>
+              <span className="text-xs text-slate-500">Tasks Completed</span>
+            </Card>
+            <Card className="p-4">
+              <p className="text-2xl font-bold">{data.studyPlan.length}</p>
+              <span className="text-xs text-slate-500">Timetable Sessions</span>
+            </Card>
+          </div>
+        </div>
+      );
+    }
+
+    function SettingsView({ data, updateData, notify, onReset }) {
+      const [name, setName] = useState(data.profile.name);
+      return (
+        <Card className="p-5 max-w-md mx-auto space-y-4 text-xs">
+          <h3 className="font-bold text-sm">Settings</h3>
+          <div>
+            <label className="block mb-1 font-semibold">User Name</label>
+            <input type="text" value={name} onChange={e => setName(e.target.value)} className="w-full px-3 py-2 border rounded-lg" />
+          </div>
+          <button onClick={() => { updateData(p => ({ ...p, profile: { ...p.profile, name } })); notify('Saved'); }} className="px-4 py-2 bg-indigo-600 text-white font-semibold rounded-lg">Save Profile</button>
+          <div className="pt-3 border-t">
+            <button onClick={onReset} className="text-rose-600 font-semibold">Reset Database</button>
+          </div>
+        </Card>
+      );
+    }
+
+    // Mount
+    ReactDOM.createRoot(document.getElementById('root')).render(<App />);
+  </script>
+
+  <!-- PWA Service Worker -->
+  <script>
+    if ('serviceWorker' in navigator) {
+      window.addEventListener('load', () => {
+        const swCode = `
+          self.addEventListener('install', (e) => self.skipWaiting());
+          self.addEventListener('activate', (e) => e.waitUntil(self.clients.claim()));
+          self.addEventListener('fetch', (e) => e.respondWith(fetch(e.request).catch(() => caches.match(e.request))));
+        `;
+        const blob = new Blob([swCode], { type: 'application/javascript' });
+        navigator.serviceWorker.register(URL.createObjectURL(blob)).catch(() => {});
+      });
+    }
+  </script>
+</body>
+</html>s
